@@ -1,7 +1,9 @@
 import { checkHex, getFirstCommonElements, getIndexOfLastNonZeroElement, keyToPath } from "./utils";
 
+import { LevelStore } from "./store"
+import { Level } from "level";
 
-export type Node = string | bigint;
+export type Node = string;
 export type Key = Node;
 export type Value = Node;
 export type EntryMark = Node;
@@ -37,17 +39,25 @@ export class SMT {
     // protected store;
     private hash: HashFunction;
 
-    // Key/value map in which the key is a node of the tree and
-    // the value is an array of child nodes. When the node is
-    // a leaf node the child nodes are an entry (key/value) of the tree.
-    private nodes: Map<Node, ChildNodes>
+    private store: LevelStore;
 
-    constructor(hash: HashFunction) {
+    public static async build(hash: HashFunction, levelDb: Level, smtName: string):Promise<SMT>{
+        if(levelDb.status in ['opening', 'closing']) {
+            throw Error("db opening or closing")
+        }
+
+        if(levelDb.status === 'closed') {
+            await levelDb.open()
+        }
+        return new SMT(hash, levelDb, smtName)
+    }
+
+    constructor(hash: HashFunction, levelDb: Level, smtName: string) {
         this.hash = hash
         this.zeroNode = "0"
         this.entryMark = "1"
         this.root = this.zeroNode
-        this. nodes = new Map()
+        this.store = new LevelStore(levelDb, smtName??'test')
     }
 
     private checkParameterType(parameter: Key | Value) {
@@ -56,31 +66,34 @@ export class SMT {
         }
     }
 
-    private retrieveEntry(key: Key): EntryResponse {
+    private async retrieveEntry(key: Key): Promise<EntryResponse> {
         const path = keyToPath(key)
         const sidenodes: SideNodes = []
-
         for (let i = 0, node = this.root; node !== this.zeroNode ; i++) {
-            const childNodes = this.nodes.get(node) as ChildNodes
+            const childNodes = await this.store.getNodes(node) as ChildNodes
+            const entryNode = await this.store.getValues(node) as Entry
             const direction = path[i]
             // if the third position of the array is not empty the child nodes
             // are an entry of the tree.
-            if(childNodes[2]) {
-                if (childNodes[0] === key) {
-                    return { entry: childNodes, sidenodes }
+            if(entryNode && entryNode[2]) {
+                if (entryNode[0] === key) {
+                    return { entry: entryNode, sidenodes }
                 }
                 // The entry found does not have the same key. But the key of this
                 // particular entry matches the first 'i' bits of the key passed
                 // as parameter and it can be useful in several functions.
-                return { entry: [key], matchingEntry: childNodes, sidenodes }
+                return { entry: [key], matchingEntry: entryNode, sidenodes }
+            } else if(childNodes) {
+                // When it goes down into the tree and follows the path, in every step
+                // a node is chosen between the left and the right child nodes, and the
+                // opposite node is saved as side node.
+                node = childNodes[direction] as Node
+                sidenodes.push(childNodes[Number(!direction)] as Node)
+            } else {
+                throw new Error(`Key "${key}" not exist`)
             }
-            // When it goes down into the tree and follows the path, in every step
-            // a node is chosen between the left and the right child nodes, and the
-            // opposite node is saved as side node.
-            node = childNodes[direction] as Node
-            sidenodes.push(childNodes[Number(!direction)] as Node)
+            
         }
-
         // The path led to a zero node.
         return { entry: [key], sidenodes }
     }
@@ -90,8 +103,8 @@ export class SMT {
      * @param node A node of the tree.
      * @returns True if the node is a leaf, false otherwise.
      */
-    private isLeaf(node: Node): boolean {
-        const childNodes = this.nodes.get(node)
+    private async isLeaf(node: Node): Promise<boolean> {
+        const childNodes = await this.store.getNodes(node)
 
         return !!(childNodes && childNodes[2])
     }
@@ -118,9 +131,9 @@ export class SMT {
      * @param key A key of a tree entry.
      * @returns A value of a tree entry or 'undefined'.
      */
-    get(key: Key): Value | undefined {
+    public async get(key: Key): Promise<Value | undefined> {
         this.checkParameterType(key)
-        const { entry } = this.retrieveEntry(key)
+        const { entry } = await this.retrieveEntry(key)
         return entry[1]
     }
 
@@ -131,11 +144,11 @@ export class SMT {
      * @param key The key of the new entry.
      * @param value The value of the new entry.
      */
-    add(key: Key, value: Value) {
+    public async add(key: Key, value: Value) {
         this.checkParameterType(key)
         this.checkParameterType(value)
-        const { entry, matchingEntry, sidenodes } = this.retrieveEntry(key)
-
+        
+        const { entry, matchingEntry, sidenodes } = await this.retrieveEntry(key)
         if (entry[1] !== undefined) {
             throw new Error(`Key "${key}" already exists`)
         }
@@ -169,8 +182,9 @@ export class SMT {
         // with a bottom-up approach. The `addNewNodes` function returns the last node
         // added, which is the root node.
         const newNode = this.hash([key, value, this.entryMark])
-        this.nodes.set(newNode, [key, value, this.entryMark])
-        this.root = this.addNewNodes(newNode, path, sidenodes)
+        this.store.preparePutValue(newNode, [key, value, this.entryMark].toString())
+        await this.store.commit()
+        this.root = await this.addNewNodes(newNode, path, sidenodes)
     }
 
     /**
@@ -180,11 +194,11 @@ export class SMT {
      * @param key The key of the entry.
      * @param value The value of the entry.
      */
-    update(key: Key, value: Value) {
+    public async update(key: Key, value: Value) {
         this.checkParameterType(key)
         this.checkParameterType(value)
 
-        const { entry, sidenodes } = this.retrieveEntry(key)
+        const { entry, sidenodes } = await this.retrieveEntry(key)
 
         if (entry[1] === undefined) {
             throw new Error(`Key "${key}" does not exist`)
@@ -194,14 +208,16 @@ export class SMT {
 
         // Deletes the old entry and all the nodes in its path.
         const oldNode = this.hash(entry)
-        this.nodes.delete(oldNode)
-        this,this.deleteOldNodes(oldNode, path, sidenodes)
+        this.store.prepareDelNodes(oldNode)
+        this.deleteOldNodes(oldNode, path, sidenodes)
 
         // Adds the new entry and re-creates the nodes of the path
         // with the new hashes
         const newNode = this.hash([key, value, this.entryMark])
-        this.nodes.set(newNode, [key, value, this.entryMark])
-        this.root = this.addNewNodes(newNode, path, sidenodes)
+        this.store.preparePutValue(newNode, [key, value, this.entryMark].toString())
+
+        await this.store.commit()
+        this.root = await this.addNewNodes(newNode, path, sidenodes)
     }
 
     /**
@@ -209,10 +225,10 @@ export class SMT {
      * the nodes in the path of the entry are updated with a bottom-up approach.
      * @param key The key of the entry.
      */
-    delete(key: Key) {
+    public async delete(key: Key) {
         this.checkParameterType(key)
 
-        const { entry, sidenodes } = this.retrieveEntry(key)
+        const { entry, sidenodes } = await this.retrieveEntry(key)
 
         if(entry[1] === undefined) {
             throw new Error(`Key "${key}" does not exist`)
@@ -222,7 +238,7 @@ export class SMT {
 
         // Deletes the entry
         const node = this.hash(entry)
-        this.nodes.delete(node)
+        this.store.prepareDelValue(node)
 
         this.root = this.zeroNode
 
@@ -235,13 +251,13 @@ export class SMT {
             // nodes of the path starting from a zero node, otherwise
             // it removes the last non-zero side node from the `sidenodes`
             // array and it starts from it by skipping the last zero nodes.
-            if (!this.isLeaf(sidenodes[sidenodes.length - 1])) {
-                this.root = this.addNewNodes(this.zeroNode, path, sidenodes)
+            if (! await this.isLeaf(sidenodes[sidenodes.length - 1])) {
+                this.root = await this.addNewNodes(this.zeroNode, path, sidenodes)
             } else {
                 const firstSidenode = sidenodes.pop() as Node
                 const i = getIndexOfLastNonZeroElement(sidenodes)
 
-                this.root = this.addNewNodes(firstSidenode, path, sidenodes, i)
+                this.root = await this.addNewNodes(firstSidenode, path, sidenodes, i)
             }
 
         }
@@ -254,10 +270,10 @@ export class SMT {
      * @param key A key of an existing or a non-existing entry.
      * @returns The membership or the non-membership proof.
      */
-    createProof(key: Key): SMTProof {
+    public async createProof(key: Key): Promise<SMTProof> {
         this.checkParameterType(key)
 
-        const { entry, matchingEntry, sidenodes } = this.retrieveEntry(key)
+        const { entry, matchingEntry, sidenodes } = await this.retrieveEntry(key)
 
         // If the key exists the function returns a membership proof, otherwise it
         // returns a non-membership proof with the matching entry.
@@ -277,7 +293,7 @@ export class SMT {
      * @returns True if the proof is valid, false otherwise.
      */
 
-    verifyProof(proof: SMTProof): boolean {
+    public verifyProof(proof: SMTProof): boolean {
         // If there is not a matching entry it simply obtains the root
         // hash by using the side nodes and the path of the key.
         if(!proof.matchingEntry) {
@@ -323,12 +339,13 @@ export class SMT {
      * @param sidenodes The side nodes of the path.
      * @param i The index to start from.
      */
-    private deleteOldNodes(node: Node, path: number[], sidenodes: SideNodes) {
+    private async deleteOldNodes(node: Node, path: number[], sidenodes: SideNodes) {
         for(let i = sidenodes.length - 1; i >= 0; i--) {
             const childNodes: ChildNodes = path[i] ? [sidenodes[i], node] : [node, sidenodes[i]]
             node = this.hash(childNodes)
 
-            this.nodes.delete(node)
+            this.store.prepareDelNodes(node)
+            await this.store.commit()
         }
     }
 
@@ -340,13 +357,28 @@ export class SMT {
      * @param i The index to start from.
      * @returns The root node.
      */
-    private addNewNodes(node: Node, path: number[], sidenodes: SideNodes, i = sidenodes.length - 1): Node {
+    private async addNewNodes(node: Node, path: number[], sidenodes: SideNodes, i = sidenodes.length - 1): Promise<Node> {
         for(; i >= 0; i--) {
             const childNodes: ChildNodes = path[i] ? [sidenodes[i], node] : [node, sidenodes[i]]
             node = this.hash(childNodes)
-            this.nodes.set(node, childNodes)
+            this.store.preparePutNodes(node, childNodes)
         }
+        await this.store.commit()
         return node
+    }
+
+    public async debugTree(): Promise<void> {
+        const valuesMap = await this.store.getValuesMap()
+        const nodesMap = await this.store.getNodesMap()
+
+        console.log("start print valuesMap")
+        valuesMap.forEach((value,key) => {
+            console.log(`[key] ${key} [value] ${value}`)
+        })
+        console.log("start print nodesMap")
+        nodesMap.forEach((value,key) => {
+            console.log(`[key] ${key} [node] ${value}`)
+        })
     }
 
 }

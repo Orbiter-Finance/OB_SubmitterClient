@@ -49,15 +49,18 @@ export class SMT {
         if(levelDb.status === 'closed') {
             await levelDb.open()
         }
-        return new SMT(hash, levelDb, smtName)
+
+        const store = new LevelStore(levelDb, smtName??'test')
+        const root = await store.getRoot()
+        return new SMT(hash, store, root)
     }
 
-    constructor(hash: HashFunction, levelDb: Level, smtName: string) {
+    constructor(hash: HashFunction,  store: LevelStore, root: Node | null) {
         this.hash = hash
         this.zeroNode = "0"
         this.entryMark = "1"
-        this.root = this.zeroNode
-        this.store = new LevelStore(levelDb, smtName??'test')
+        this.root = (root == null) ? this.zeroNode : root
+        this.store = store
     }
 
     private checkParameterType(parameter: Key | Value) {
@@ -104,9 +107,10 @@ export class SMT {
      * @returns True if the node is a leaf, false otherwise.
      */
     private async isLeaf(node: Node): Promise<boolean> {
-        const childNodes = await this.store.getNodes(node)
+        const childNodes = await this.store.getValues(node)
+        
 
-        return !!(childNodes && childNodes[2])
+        return !!(childNodes !== null && childNodes[2])
     }
 
     /**
@@ -134,6 +138,7 @@ export class SMT {
     public async get(key: Key): Promise<Value | undefined> {
         this.checkParameterType(key)
         const { entry } = await this.retrieveEntry(key)
+        console.log(`entry ${entry}`)
         return entry[1]
     }
 
@@ -185,6 +190,8 @@ export class SMT {
         this.store.preparePutValue(newNode, [key, value, this.entryMark].toString())
         await this.store.commit()
         this.root = await this.addNewNodes(newNode, path, sidenodes)
+        this.store.prepareUpdateRoot(this.root)
+        await this.store.commit()
     }
 
     /**
@@ -218,6 +225,8 @@ export class SMT {
 
         await this.store.commit()
         this.root = await this.addNewNodes(newNode, path, sidenodes)
+        this.store.prepareUpdateRoot(this.root)
+        await this.store.commit()
     }
 
     /**
@@ -261,6 +270,9 @@ export class SMT {
             }
 
         }
+
+        this.store.prepareUpdateRoot(this.root)
+        await this.store.commit()
 
     }
     
@@ -370,15 +382,17 @@ export class SMT {
     public async debugTree(): Promise<void> {
         const valuesMap = await this.store.getValuesMap()
         const nodesMap = await this.store.getNodesMap()
-
-        console.log("start print valuesMap")
+        const root = await this.store.getRoot()
+        let logStr = `tree Root: ${root}\n`
+        logStr += "start print valuesMap\n"
         valuesMap.forEach((value,key) => {
-            console.log(`[key] ${key} [value] ${value}`)
+            logStr += `[key] ${key} [value] ${value}\n`
         })
-        console.log("start print nodesMap")
+        logStr += "start print nodesMap\n"
         nodesMap.forEach((value,key) => {
-            console.log(`[key] ${key} [node] ${value}`)
+            logStr += `[key] ${key} [node] ${value}\n`
         })
+        console.log(`${logStr}`)
     }
 
 }

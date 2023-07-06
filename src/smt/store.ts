@@ -45,7 +45,6 @@ export class LevelStore {
         } catch(error) {
             return null
         }
-       
     }
 
     public async getValues(key: Key): Promise<Value[] | null> {
@@ -55,7 +54,15 @@ export class LevelStore {
         }   catch(error) {
             return null
         }
-        
+    }
+
+    public async getRoot(): Promise<Node | null> {
+        try {
+            const rootStr = await this.nodesSubLevel.get('root')
+            return rootStr
+        } catch(error) {
+            return null
+        }
     }
 
     public preparePutNodes(key: Key, value: Key[]): void {
@@ -87,6 +94,7 @@ export class LevelStore {
             value: value
         })
     }
+
     public prepareDelValue(path: Key): void {
         this.operationCache.push({
             type: 'del',
@@ -94,6 +102,16 @@ export class LevelStore {
             key: path.toString()
         });
     }
+
+    public prepareUpdateRoot(root: Node): void {
+        this.operationCache.push({
+            type: 'put',
+            sublevel: this.nodesSubLevel,
+            key: 'root',
+            value: root
+        })
+    }
+
     public async commit(): Promise<void> {
         if (this.operationCache.length > 0) {
             await this.db.batch(this.operationCache)

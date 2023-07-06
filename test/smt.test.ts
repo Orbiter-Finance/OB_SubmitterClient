@@ -3,26 +3,49 @@ import { SMT } from "../src"
 import { ChildNodes } from "../src/smt/smt"
 import { sha256 } from "js-sha256"
 
+import fs from 'fs';
+
+function deleteDirectory(path: string) {
+  if (fs.existsSync(path)) {
+    fs.readdirSync(path).forEach((file) => {
+      const curPath = `${path}/${file}`;
+      if (fs.lstatSync(curPath).isDirectory()) {
+        deleteDirectory(curPath); 
+      } else {
+        fs.unlinkSync(curPath);
+      }
+    });
+    fs.rmdirSync(path);
+  }
+}
+
+
 describe("Sparse Merkle tree", () => {
     
     const hash = (childNodes: ChildNodes):string => sha256(childNodes.join(""))
     const testKeys = ["a", "3", "2b", "20", "9", "17"]
-    const levelDb = new Level<string, any>('./db')
-
+    let levelDb: Level
+    const dbPath = './db'
     let tree: SMT
 
-    beforeEach(async () => {
+    // beforeAll(async () => {
+    //     deleteDirectory(dbPath)
+    //     levelDb = new Level<string, any>('./db')
+    //     tree = await SMT.build(hash, levelDb, 'test')
+    // });
+
+    test("Should create an empty sparse Merkle tree", async () => {
+        deleteDirectory(dbPath)
+        levelDb = new Level<string, any>('./db')
         tree = await SMT.build(hash, levelDb, 'test')
-    });
-    
-
-    it("Should create an empty sparse Merkle tree", async () => {
-
         expect(tree.root).toEqual("0")
         expect(true).toEqual(true)
     })
 
-    it("Should add a new entry", async () => {
+    test("Should add a new entry", async () => {
+        deleteDirectory(dbPath)
+        levelDb = new Level<string, any>('./db')
+        tree = await SMT.build(hash, levelDb, 'test')
         const oldRoot = tree.root
 
         await tree.add("2", "a")
@@ -31,7 +54,10 @@ describe("Sparse Merkle tree", () => {
     })
 
 
-    it("Should add 6 new entries and create the correct root hash", async () => {
+    test("Should add 6 new entries and create the correct root hash", async () => {
+        deleteDirectory(dbPath)
+        levelDb = new Level<string, any>('./db')
+        tree = await SMT.build(hash, levelDb, 'test')
         for (const key of testKeys) {
             await tree.add(key, key)
         }
@@ -39,124 +65,148 @@ describe("Sparse Merkle tree", () => {
         expect(tree.root).toEqual("40770450d00520bdab58e115dd4439c20cd39028252f3973e81fb15b02eb28f7")
     })
 
+    test("Should add specific new entries and create the correct roo", async () => {
+        deleteDirectory(dbPath)
+        levelDb = new Level<string, any>('./db')
+        tree = await SMT.build(hash, levelDb, 'test')
+        await tree.add(testKeys[0], testKeys[0])
+        await tree.add(testKeys[2], testKeys[2])
+        await tree.add(testKeys[5], testKeys[5])
 
-    // describe("Add new entries (key/value) in the tree", () => {
+        expect(tree.root).toEqual("5d2bfda7c24d9e9e59fe89a271f7d0a3435892c98bc1121b9b590d800deeca10")
+    })
 
-    //     it("Should not add a new entry with an existing key", async () => {
-    //         // const tree = await SMT.build(hash, levelDb, 'test')
 
-    //         await tree.add("2", "b")
-    //         const fun = async () => await tree.add("2", "a")
+   
+    // it("Should not add a new entry with an existing key", async () => {
+    //     // const tree = await SMT.build(hash, levelDb, 'test')
 
-    //         expect(fun).toThrow()
-    //     })
+    //     await tree.add("2", "b")
+    //     const fun = async () => await tree.add("2", "a")
 
+    //     expect(fun).toThrow()
     // })
 
-    // describe("Get values from the tree", () => {
-    //     it("Should get a value from the tree using an existing key", () => {
-    //         const tree = new SMT(hash)
+    describe("Get values from the tree", () => {
+        
+        test("Should get a value from the tree using an existing key", async () => {
+            deleteDirectory(dbPath)
+            levelDb = new Level<string, any>('./db')
+            tree = await SMT.build(hash, levelDb, 'test')
+            await tree.add("2aaa", "a")
+            const value = await tree.get("2aaa")
 
-    //         tree.add("2", "a")
-    //         const value = tree.get("2")
+            expect(value).toEqual("a")
+        })
 
-    //         expect(value).toEqual("a")
-    //     })
+        test("Should not get a value from the tree using a non-existing key", async () => {
+            deleteDirectory(dbPath)
+            levelDb = new Level<string, any>('./db')
+            tree = await SMT.build(hash, levelDb, 'test')
 
-    //     it("Should not get a value from the tree using a non-existing key", () => {
-    //         const tree = new SMT(hash)
+            // await tree.debugTree()
 
-    //         tree.add("2", "a")
-    //         const value = tree.get("1")
+            // await tree.add("2b", "2befadd")
 
-    //         expect(value).toBeUndefined()
-    //     })
-    // })
+            // const valueOld = await tree.get("2b")
 
-    // describe("Update values in the tree", () => {
-    //     it("Should update a value of an existing key", () => {
-    //         const tree = new SMT(hash)
+            // expect(valueOld).toEqual("a")
 
-    //         tree.add("2", "a")
-    //         tree.update("2", "5")
+            // await tree.add("2", "b")
+            const value = await tree.get("1")
 
-    //         expect(tree.root).toEqual("c75d3f1f5bcd6914d0331ce5ec17c0db8f2070a2d4285f8e3ff11c6ca19168ff")
-    //     })
+            expect(value).toBeUndefined()
+        })
+    })
 
-    //     it("Should not update a value with a non-existing key", () => {
-    //         const tree = new SMT(hash)
+    describe("Update values in the tree", () => {
+        test("Should update a value of an existing key", async () => {
+            deleteDirectory(dbPath)
+            levelDb = new Level<string, any>('./db')
+            tree = await SMT.build(hash, levelDb, 'test')
+            await tree.debugTree()
+            await tree.add("2", "a")
+            await tree.update("2", "5")
 
-    //         const fun = () => tree.update("1", "5")
+            expect(tree.root).toEqual("c75d3f1f5bcd6914d0331ce5ec17c0db8f2070a2d4285f8e3ff11c6ca19168ff")
+        })
 
-    //         expect(fun).toThrow()
-    //     })
-    // })
+        // it("Should not update a value with a non-existing key", async() => {
+        
 
-    // describe("Delete entries from the tree", () => {
-    //     it("Should delete an entry with an existing key", () => {
-    //         const tree = new SMT(hash)
+        //     const fun = async () => await tree.update("1", "5")
 
-    //         tree.add("2", "a")
-    //         tree.delete("2")
+        //     expect(fun).toThrow()
+        // })
+    })
 
-    //         expect(tree.root).toEqual("0")
-    //     })
+    describe("Delete entries from the tree", () => {
+        test("Should delete an entry with an existing key", async () => {
+            deleteDirectory(dbPath)
+            levelDb = new Level<string, any>('./db')
+            tree = await SMT.build(hash, levelDb, 'test')
+            await tree.add("2", "a")
+            await tree.delete("2")
+            expect(tree.root).toEqual("0")
+        })
 
-    //     it("Should delete 3 entries and create the correct root hash", () => {
-    //         const tree = new SMT(hash)
+        test("Should delete 3 entries and create the correct root hash", async () => {
+            deleteDirectory(dbPath)
+            levelDb = new Level<string, any>('./db')
+            tree = await SMT.build(hash, levelDb, 'test')
+            for (const key of testKeys) {
+                await tree.add(key, key)
+            }
 
-    //         for (const key of testKeys) {
-    //             tree.add(key, key)
-    //         }
 
-    //         tree.delete(testKeys[1])
-    //         tree.delete(testKeys[3])
-    //         tree.delete(testKeys[4])
+            await tree.delete(testKeys[1])
+            await tree.delete(testKeys[3])
+            await tree.delete(testKeys[4])
 
-    //         expect(tree.root).toEqual("5d2bfda7c24d9e9e59fe89a271f7d0a3435892c98bc1121b9b590d800deeca10")
-    //     })
+            expect(tree.root).toEqual("5d2bfda7c24d9e9e59fe89a271f7d0a3435892c98bc1121b9b590d800deeca10")
+        })
 
-    //     it("Should not delete an entry with a non-existing key", () => {
-    //         const tree = new SMT(hash)
+        // it("Should not delete an entry with a non-existing key", () => {
 
-    //         const fun = () => tree.delete("1")
+        //     const fun = async () => await tree.delete("1")
 
-    //         expect(fun).toThrow()
-    //     })
-    // })
+        //     expect(fun).toThrow()
+        // })
+    })
 
-    // describe("Create Merkle proofs and verify them", () => {
-    //     it("Should create some Merkle proofs and verify them", async () => {
-    //         const tree = new SMT(hash)
+    describe("Create Merkle proofs and verify them", () => {
+        test("Should create some Merkle proofs and verify them", async () => {
+            deleteDirectory(dbPath)
+            levelDb = new Level<string, any>('./db')
+            tree = await SMT.build(hash, levelDb, 'test')
+            for (const key of testKeys) {
+                await tree.add(key, key)
+            }
 
-    //         for (const key of testKeys) {
-    //             tree.add(key, key)
-    //         }
+            for (let i = 0; i < 100; i++) {
+                const randomKey = Math.floor(Math.random() * 100).toString(16)
+                const proof = await tree.createProof(randomKey)
 
-    //         for (let i = 0; i < 100; i++) {
-    //             const randomKey = Math.floor(Math.random() * 100).toString(16)
-    //             const proof = await tree.createProof(randomKey)
+                expect(tree.verifyProof(proof)).toBeTruthy()
+            }
 
-    //             expect(tree.verifyProof(proof)).toBeTruthy()
-    //         }
+            const proof = await tree.createProof("3")
+            expect(tree.verifyProof(proof)).toBeTruthy()
 
-    //         tree.add("12", "1")
+        })
 
-    //         const proof = await tree.createProof("6")
-    //         expect(tree.verifyProof(proof)).toBeTruthy()
-    //     })
+        test("Should not verify a wrong Merkle proof", async () => {
+            deleteDirectory(dbPath)
+            levelDb = new Level<string, any>('./db')
+            tree = await SMT.build(hash, levelDb, 'test')
+            for (const key of testKeys) {
+                await tree.add(key, key)
+            }
 
-    //     it("Should not verify a wrong Merkle proof", async () => {
-    //         const tree = new SMT(hash)
+            const proof = await tree.createProof("19")
+            proof.matchingEntry = ["20", "a"]
 
-    //         for (const key of testKeys) {
-    //             tree.add(key, key)
-    //         }
-
-    //         const proof = await tree.createProof("19")
-    //         proof.matchingEntry = ["20", "a"]
-
-    //         expect(tree.verifyProof(proof)).toBeFalsy()
-    //     })
-    // })
+            expect(tree.verifyProof(proof)).toBeFalsy()
+        })
+    })
 })

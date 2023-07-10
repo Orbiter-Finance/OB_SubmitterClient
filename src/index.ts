@@ -1,3 +1,7 @@
 import { SMT } from "./smt/smt";
 import { LevelStore } from "./smt/store"
-export { SMT };
+import { SMTEntryNode } from "./submitter";
+
+export * from "./types";
+
+export { SMT, SMTEntryNode };

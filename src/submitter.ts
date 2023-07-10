@@ -2,9 +2,65 @@
 
 import { JSONRPCServer } from "json-rpc-2.0"
 
+import RLP from "rlp"
+
 import bodyParser from "body-parser"
 
+import { EntryNodeTxBatch } from "./types"
+
 import express from "express"
+
+export type HashFunction = (childNodes: string[]) => string;
+
+export class SMTEntryNode {
+
+  private hash: HashFunction
+  private address: string
+  private chainId: string
+  private tokenAddress: string
+  private tokenAmount: string
+
+  private dealerId: string
+  private profitRate: string
+  private makerAddress: string
+  private dealerAddress: string
+
+  private txBatch: EntryNodeTxBatch
+
+
+  constructor(
+    hash: HashFunction,
+    address:string, 
+    chainId: string, 
+    tokenAddress: string, 
+    tokenAmount: string,
+    dealerId: string,
+    profitRate: string,
+    makerAddress: string,
+    dealerAddress: string,
+    txBatch: EntryNodeTxBatch
+  ) {
+    this.hash = hash
+    this.address = address
+    this.chainId = chainId
+    this.tokenAddress = tokenAddress
+    this.tokenAmount = tokenAmount
+    this.dealerId = dealerId
+    this.profitRate = profitRate
+    this.makerAddress = makerAddress
+    this.dealerAddress = dealerAddress
+    this.txBatch = txBatch
+  }
+
+  public getKey() {
+    return this.hash([this.address, this.chainId, this.tokenAddress])
+  }
+
+  public getValue() {
+    
+  }
+}
+
 
 export class Submitter {
 
